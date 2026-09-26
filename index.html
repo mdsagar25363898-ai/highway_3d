@@ -1,0 +1,325 @@
+cat > /mnt/user-data/outputs/highway_3d.html << 'HTMLEOF'
+
+<!DOCTYPE html>  <html lang="bn">  
+<head>  
+<meta charset="UTF-8">  
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">  
+<title>৩ডি মহাসড়ক</title>  
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Bengali:wght@400;700&display=swap" rel="stylesheet">  
+<style>  
+:root{  
+  --bg:#87ceeb; --panel-bg:rgba(20,20,30,0.55); --panel-fg:#fff; --accent:#ffd166;  
+  box-sizing:border-box;  
+  padding-top: env(safe-area-inset-top,0px);  
+  padding-bottom: env(safe-area-inset-bottom,0px);  
+}  
+@media (prefers-color-scheme: dark){  
+  :root:not([data-theme="light"]){ --bg:#0b1020; }  
+}  
+:root[data-theme="dark"]{ --bg:#0b1020; }  
+html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);}  
+canvas{display:block;}  
+#ui{  
+  position:fixed; top:env(safe-area-inset-top,0px); left:0; right:0;  
+  display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap;  
+  padding:12px 16px; gap:10px; pointer-events:none;  
+  font-family:'Noto Sans Bengali',system-ui,sans-serif;  
+}  
+#odometer{  
+  background:var(--panel-bg); color:var(--panel-fg); padding:8px 14px; border-radius:10px;  
+  font-size:14px; backdrop-filter:blur(6px); pointer-events:auto;  
+}  
+#odometer b{color:var(--accent); font-size:16px;}  
+#controls{  
+  background:var(--panel-bg); color:var(--panel-fg); padding:8px 14px; border-radius:10px;  
+  display:flex; align-items:center; gap:10px; font-size:13px; pointer-events:auto; backdrop-filter:blur(6px);  
+}  
+button{  
+  background:var(--accent); border:none; color:#222; font-weight:700; padding:6px 12px;  
+  border-radius:8px; cursor:pointer; font-size:13px;  
+}  
+input[type=range]{width:90px;}  
+</style>  
+</head>  
+<body>  
+<div id="ui">  
+  <div id="odometer">অতিক্রান্ত দূরত্ব<br><b id="distVal">০</b> কিমি / ২,০০,০০০ কিমি</div>  
+  <div id="controls">  
+    <button id="toggleBtn">⏸ থামান</button>  
+    গতি <input id="speedSlider" type="range" min="50" max="2000" value="400">  
+  </div>  
+</div>  
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>  
+<script>  
+(function(){  
+  // ---------- texture helpers ----------  
+  function makeSkyTexture(){  
+    const c=document.createElement('canvas'); c.width=2; c.height=256;  
+    const ctx=c.getContext('2d');  
+    const g=ctx.createLinearGradient(0,0,0,256);  
+    g.addColorStop(0,'#3d84cf'); g.addColorStop(0.55,'#9fd3ec'); g.addColorStop(1,'#eaf6fb');  
+    ctx.fillStyle=g; ctx.fillRect(0,0,2,256);  
+    return new THREE.CanvasTexture(c);  
+  }  
+  function makeGrassTexture(){  
+    const c=document.createElement('canvas'); c.width=c.height=128;  
+    const ctx=c.getContext('2d');  
+    ctx.fillStyle='#4d8f3c'; ctx.fillRect(0,0,128,128);  
+    for(let i=0;i<900;i++){  
+      ctx.fillStyle = Math.random()>0.5 ? 'rgba(58,110,42,0.5)':'rgba(96,165,63,0.45)';  
+      ctx.fillRect(Math.random()*128, Math.random()*128, 2, 5);  
+    }  
+    const tex=new THREE.CanvasTexture(c);  
+    tex.wrapS=tex.wrapT=THREE.RepeatWrapping;  
+    tex.repeat.set(500,500);  
+    return tex;  
+  }  
+  function makeAsphaltTexture(){  
+    const c=document.createElement('canvas'); c.width=64; c.height=256;  
+    const ctx=c.getContext('2d');  
+    ctx.fillStyle='#3b3b40'; ctx.fillRect(0,0,64,256);  
+    for(let i=0;i<500;i++){  
+      ctx.fillStyle='rgba(255,255,255,'+(Math.random()*0.06)+')';  
+      ctx.fillRect(Math.random()*64, Math.random()*256, 2, 2);  
+    }  
+    ctx.fillStyle='#f0f0ee';  
+    ctx.fillRect(3,0,3,256); ctx.fillRect(58,0,3,256);  
+    ctx.fillStyle='#f2d24d';  
+    for(let y=0;y<256;y+=40){ ctx.fillRect(29,y,6,22); }  
+    const tex=new THREE.CanvasTexture(c);  
+    tex.wrapS=THREE.ClampToEdgeWrapping; tex.wrapT=THREE.RepeatWrapping;  
+    return tex;  
+  }  
+  function makeHouseTexture(base){  
+    const c=document.createElement('canvas'); c.width=c.height=128;  
+    const ctx=c.getContext('2d');  
+    ctx.fillStyle=base; ctx.fillRect(0,0,128,128);  
+    ctx.strokeStyle='rgba(0,0,0,0.08)';  
+    for(let y=8;y<128;y+=9){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(128,y); ctx.stroke(); }  
+    ctx.fillStyle='#bfe3f2'; ctx.strokeStyle='#5a4632'; ctx.lineWidth=3;  
+    ctx.fillRect(14,28,28,28); ctx.strokeRect(14,28,28,28);  
+    ctx.fillRect(86,28,28,28); ctx.strokeRect(86,28,28,28);  
+    ctx.fillStyle='#5a3d2b';  
+    ctx.fillRect(52,70,24,52);  
+    ctx.fillStyle='#3f2a1c'; ctx.fillRect(62,90,4,4);  
+    return new THREE.CanvasTexture(c);  
+  }  const scene = new THREE.Scene();
+scene.background = makeSkyTexture();
+scene.fog = new THREE.Fog(0xcfe9f5, 240, 1250);
+
+const camera = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 2000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xbfe3f7, 0x4a8f3c, 0.65));
+const sun = new THREE.DirectionalLight(0xfff2d6, 1.15);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+sun.shadow.camera.left=-130; sun.shadow.camera.right=130;
+sun.shadow.camera.top=130; sun.shadow.camera.bottom=-130;
+sun.shadow.camera.near=1; sun.shadow.camera.far=420;
+sun.shadow.bias=-0.0015;
+scene.add(sun); scene.add(sun.target);
+
+const grassTex = makeGrassTexture();
+const ground = new THREE.Mesh(
+new THREE.PlaneGeometry(3000,3000),
+new THREE.MeshStandardMaterial({map:grassTex, roughness:1})
+);
+ground.rotation.x = -Math.PI/2;
+ground.position.y = -0.05;
+ground.receiveShadow = true;
+ground.frustumCulled = false;
+scene.add(ground);
+
+const ROAD_W = 14, TILE_LEN = 20;
+function roadCenter(d){
+return new THREE.Vector3(
+Math.sin(d*0.004)90 + Math.sin(d0.011)45 + Math.sin(d0.027)*15,
+0, -d
+);
+}
+function roadTangent(d){
+const a = roadCenter(d), b = roadCenter(d+1);
+return b.clone().sub(a).normalize();
+}
+
+const ROAD_STEPS = 160, ROAD_STEP_LEN = 8, ROAD_AHEAD = 60;
+const roadGeo = new THREE.BufferGeometry();
+const roadPos = new Float32Array(ROAD_STEPS23);
+const roadUV = new Float32Array(ROAD_STEPS22);
+roadGeo.setAttribute('position', new THREE.BufferAttribute(roadPos,3));
+roadGeo.setAttribute('uv', new THREE.BufferAttribute(roadUV,2));
+const roadIdx = [];
+for(let i=0;i<ROAD_STEPS-1;i++){
+const a=i2,b=i2+1,c=(i+1)*2,e=(i+1)*2+1;
+roadIdx.push(a,c,b, b,c,e);
+}
+roadGeo.setIndex(roadIdx);
+const asphaltTex = makeAsphaltTexture();
+const roadMat = new THREE.MeshStandardMaterial({map:asphaltTex, roughness:0.9, side:THREE.DoubleSide});
+const roadMesh = new THREE.Mesh(roadGeo, roadMat);
+roadMesh.frustumCulled = false;
+roadMesh.receiveShadow = true;
+scene.add(roadMesh);
+
+function updateRoad(dist){
+const start = dist - ROAD_AHEAD;
+for(let i=0;i<ROAD_STEPS;i++){
+const d = start + iROAD_STEP_LEN;
+const c = roadCenter(d);
+const t = roadTangent(d);
+const right = new THREE.Vector3(-t.z,0,t.x).normalize().multiplyScalar(ROAD_W/2);
+const L = c.clone().sub(right), R = c.clone().add(right);
+roadPos[i6]=L.x; roadPos[i6+1]=0.02; roadPos[i6+2]=L.z;
+roadPos[i6+3]=R.x; roadPos[i6+4]=0.02; roadPos[i6+5]=R.z;
+const v = d/TILE_LEN;
+roadUV[i4]=0; roadUV[i4+1]=v;
+roadUV[i4+2]=1; roadUV[i*4+3]=v;
+}
+roadGeo.attributes.position.needsUpdate = true;
+roadGeo.attributes.uv.needsUpdate = true;
+roadGeo.computeVertexNormals();
+}
+
+// ---------- houses ----------
+const HOUSE_COUNT = 90;
+const wallGeo = new THREE.BoxGeometry(8,6,7);
+const roofGeo = new THREE.ConeGeometry(6.5,4,4);
+const wallColors = [0xf4a460,0xe8c39e,0xd9a066,0xc9ada7,0xf6bd60];
+const colorArr = new Float32Array(HOUSE_COUNT3);
+const colorTmp = new THREE.Color();
+for(let i=0;i<HOUSE_COUNT;i++){ colorTmp.set(wallColors[i%wallColors.length]); colorTmp.toArray(colorArr,i3); }
+wallGeo.setAttribute('color', new THREE.InstancedBufferAttribute(colorArr,3));
+const houseTex = makeHouseTexture('#ffffff');
+const wallMat = new THREE.MeshStandardMaterial({vertexColors:true, map:houseTex, roughness:0.85});
+const roofMat = new THREE.MeshStandardMaterial({color:0x8b3a2f, roughness:0.7});
+const wallMesh = new THREE.InstancedMesh(wallGeo, wallMat, HOUSE_COUNT);
+const roofMesh = new THREE.InstancedMesh(roofGeo, roofMat, HOUSE_COUNT);
+wallMesh.castShadow = true; wallMesh.receiveShadow = true;
+roofMesh.castShadow = true;
+scene.add(wallMesh, roofMesh);
+
+const HOUSE_SPACING = 20;
+const dummy = new THREE.Object3D();
+function placeHouses(dist){
+const startIdx = Math.floor((dist-100)/HOUSE_SPACING);
+for(let k=0;k<HOUSE_COUNT;k++){
+const idx = startIdx + k;
+const side = idx%2===0 ? 1 : -1;
+const d = idxHOUSE_SPACING;
+const c = roadCenter(d);
+const t = roadTangent(d);
+const right = new THREE.Vector3(-t.z,0,t.x).normalize();
+const jitter = Math.abs(Math.sin(idx12.9898)43758.5453 % 1);
+const offset = ROAD_W/2 + 12 + jitter6;
+const pos = c.clone().add(right.clone().multiplyScalar(side*offset));
+const yaw = Math.atan2(t.x,t.z) + (side>0?Math.PI/2:-Math.PI/2);
+dummy.position.set(pos.x, 3, pos.z);
+dummy.rotation.set(0,yaw,0);
+dummy.updateMatrix();
+wallMesh.setMatrixAt(k, dummy.matrix);
+dummy.position.y = 8;
+dummy.updateMatrix();
+roofMesh.setMatrixAt(k, dummy.matrix);
+}
+wallMesh.instanceMatrix.needsUpdate = true;
+roofMesh.instanceMatrix.needsUpdate = true;
+}
+
+// ---------- trees ----------
+const TREE_COUNT = 100, TREE_SPACING = 14;
+const trunkGeo = new THREE.CylinderGeometry(0.35,0.5,3,6);
+const foliageGeo = new THREE.ConeGeometry(2.4,5,7);
+const trunkMat = new THREE.MeshStandardMaterial({color:0x6b4a30, roughness:1});
+const foliageMat = new THREE.MeshStandardMaterial({color:0x2f7d3b, roughness:0.9});
+const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, TREE_COUNT);
+const foliageMesh = new THREE.InstancedMesh(foliageGeo, foliageMat, TREE_COUNT);
+trunkMesh.castShadow = true; foliageMesh.castShadow = true;
+scene.add(trunkMesh, foliageMesh);
+
+function placeTrees(dist){
+const startIdx = Math.floor((dist-100)/TREE_SPACING);
+for(let k=0;k<TREE_COUNT;k++){
+const idx = startIdx + k;
+const side = idx%2===0 ? 1 : -1;
+const d = idxTREE_SPACING + 7;
+const c = roadCenter(d);
+const t = roadTangent(d);
+const right = new THREE.Vector3(-t.z,0,t.x).normalize();
+const jitter = Math.abs(Math.sin(idx78.233)12543.99 % 1);
+const offset = ROAD_W/2 + 6 + jitter10;
+const pos = c.clone().add(right.clone().multiplyScalar(sideoffset));
+const scale = 0.8 + jitter0.6;
+dummy.position.set(pos.x, 1.5scale, pos.z);
+dummy.rotation.set(0,jitter6.28,0);
+dummy.scale.set(scale,scale,scale);
+dummy.updateMatrix();
+trunkMesh.setMatrixAt(k, dummy.matrix);
+dummy.position.y = 5*scale;
+dummy.updateMatrix();
+foliageMesh.setMatrixAt(k, dummy.matrix);
+}
+dummy.scale.set(1,1,1);
+trunkMesh.instanceMatrix.needsUpdate = true;
+foliageMesh.instanceMatrix.needsUpdate = true;
+}
+
+let dist = 0;
+let speed = 400/60;
+let running = true;
+const speedSlider = document.getElementById('speedSlider');
+const toggleBtn = document.getElementById('toggleBtn');
+const distVal = document.getElementById('distVal');
+speedSlider.addEventListener('input', e=>{ speed = (+e.target.value)/60; });
+toggleBtn.addEventListener('click', ()=>{
+running = !running;
+toggleBtn.textContent = running ? '⏸ থামান' : '▶ চালান';
+});
+function fmt(n){ return Math.floor(n).toLocaleString('bn-BD'); }
+
+function animate(){
+requestAnimationFrame(animate);
+if(running){
+dist += speed;
+if(dist>200000) dist = dist % 200000;
+distVal.textContent = fmt(dist);
+}
+updateRoad(dist);
+placeHouses(dist);
+placeTrees(dist);
+
+const camPos = roadCenter(dist-8);  
+const ahead = roadCenter(dist+40);  
+const bob = Math.sin(dist*0.35)*0.12;  
+camera.position.set(camPos.x, 19+bob, camPos.z);  
+camera.lookAt(ahead.x, 4, ahead.z);  
+
+ground.position.x = camPos.x;  
+ground.position.z = camPos.z;  
+
+sun.position.set(camPos.x-90, 160, camPos.z+110);  
+sun.target.position.set(camPos.x, 0, camPos.z);  
+sun.target.updateMatrixWorld();  
+
+renderer.render(scene, camera);
+
+}
+animate();
+
+window.addEventListener('resize', ()=>{
+camera.aspect = innerWidth/innerHeight;
+camera.updateProjectionMatrix();
+renderer.setSize(innerWidth, innerHeight);
+});
+})();
+</script>
+
+</body>  
+</html>  
+HTMLEOF  
+echo "done"
